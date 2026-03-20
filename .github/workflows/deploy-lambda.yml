@@ -1,0 +1,56 @@
+name: Deploy Lambda
+
+on:
+    workflow_call:
+        inputs:
+            function_name:
+                description: "Lambda function name"
+                required : true
+                type: string
+            s3_bucket:
+                description: "S3 bucket where the zip is stored"
+                required: true
+                type: string
+            s3_key:
+                description: "S3 key (path the zip file)"
+                required: true
+                type: string
+            aws_region:
+                description: "AWS Region"
+                required: true
+                type: string
+
+        secrets:
+            AWS_ACCESS_KEY_ID:
+                required: true
+            AWS_SECRET_ACCESS_KEY:
+                required: true
+
+jobs:
+    deploy:
+        name: Deploy Lambda Function
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v4
+              with: 
+                aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+                aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+                aws-region: ${{inputs.aws_region}}
+
+            - name: Update Lambda Function code
+              run: |
+                echo "Deploying Lambda: ${{inputs.function_name}}"
+
+                aws lambda update-function-code\
+                    --function-name "${{inputs.function_name}}"\
+                    --s3-bucket "${{inputs.s3_bucket}}"\
+                    --s3-key "${{inputs.s3_key}}"
+            - name: Wait for Lambda update to complete
+              run: |
+                echo "Waiting for deployment to complete ..."
+                aws lambda wait function-updated\
+                    --function-name "${{inputs.function_name}}"
+            - name: Deployment success
+              run: echo "Lambda deployed successfully !!!!"
