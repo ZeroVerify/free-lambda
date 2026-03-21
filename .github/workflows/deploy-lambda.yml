@@ -1,0 +1,57 @@
+name: Deploy Lambda
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGIONS: "us-east-1,us-west-2"
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build Lambda
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap -tags lambda.norpc main.go
+          zip issuer-lambda.zip bootstrap
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::043189681060:role/ZeroVerifyGitHubActionsLambdaDeployment
+          aws-region: us-east-1
+
+      - name: Deploy to all regions
+        run: |
+          IFS=',' read -ra REGIONS <<< "$AWS_REGIONS"
+          for region in "${REGIONS[@]}"; do
+            echo "Deploying to $region..."
+
+            bucket_name="zeroverify-deployment-artifacts-${region}"
+
+            aws s3 cp free-lambda.zip s3://${bucket_name}/lambda/free-lambda.zip --region $region
+
+            aws lambda update-function-code \
+              --function-name zeroverify-free \
+              --s3-bucket ${bucket_name} \
+              --s3-key lambda/free-lambda.zip \
+              --region $region
+
+            echo "Successfully deployed to $region"
+          done
