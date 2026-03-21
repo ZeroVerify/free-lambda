@@ -29,7 +29,7 @@ jobs:
       - name: Build Lambda
         run: |
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap -tags lambda.norpc main.go
-          zip issuer-lambda.zip bootstrap
+          zip free-lambda.zip bootstrap
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
