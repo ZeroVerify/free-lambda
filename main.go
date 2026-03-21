@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/ZeroVerify/zeroverify-processor/internal/handler"
+	"github.com/ZeroVerify/free-lambda/internal/handler"
 	"github.com/aws/aws-lambda-go/lambda"
 )
 
