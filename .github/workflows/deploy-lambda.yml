@@ -1,58 +1,57 @@
 name: Deploy Lambda
 
 on:
-  workflow_call:
-    inputs:
-      function_name:
-        description: "Lambda function name"
-        required: true
-        type: string
-      s3_bucket:
-        description: "S3 bucket where the zip is stored"
-        required: true
-        type: string
-      s3_key:
-        description: "S3 key for the lambda artifact"
-        required: true
-        type: string
-      aws_region:
-        description: "AWS region where the Lambda should be deployed"
-        required: true
-        type: string
-      role_to_assume:
-        description: "IAM role ARN assumed through GitHub OIDC"
-        required: true
-        type: string
+  push:
+    branches:
+      - master
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGIONS: "us-east-1,us-west-2"
+
 jobs:
   deploy:
-    name: Deploy Lambda Function
+    name: Build and Deploy
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build Lambda
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap -tags lambda.norpc main.go
+          zip issuer-lambda.zip bootstrap
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::043189681060:role/ZeroVerifyGitHubActionsLambdaDeployment
-          aws-region: ${{ inputs.aws_region }}
+          aws-region: us-east-1
 
-      - name: Update Lambda function code
+      - name: Deploy to all regions
         run: |
-          echo "Deploying Lambda: ${{ inputs.function_name }}"
-          aws lambda update-function-code \
-            --function-name "${{ inputs.function_name }}" \
-            --s3-bucket "${{ inputs.s3_bucket }}" \
-            --s3-key "${{ inputs.s3_key }}"
+          IFS=',' read -ra REGIONS <<< "$AWS_REGIONS"
+          for region in "${REGIONS[@]}"; do
+            echo "Deploying to $region..."
 
-      - name: Wait for Lambda update to complete
-        run: |
-          echo "Waiting for deployment to complete..."
-          aws lambda wait function-updated \
-            --function-name "${{ inputs.function_name }}"
+            bucket_name="zeroverify-deployment-artifacts-${region}"
 
-      - name: Deployment success
-        run: echo "Lambda deployed successfully!"
+            aws s3 cp free-lambda.zip s3://${bucket_name}/lambda/free-lambda.zip --region $region
+
+            aws lambda update-function-code \
+              --function-name zeroverify-free \
+              --s3-bucket ${bucket_name} \
+              --s3-key lambda/free-lambda.zip \
+              --region $region
+
+            echo "Successfully deployed to $region"
+          done

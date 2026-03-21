@@ -1,4 +1,4 @@
-module github.com/ZeroVerify/zeroverify-processor
+module github.com/ZeroVerify/free-lambda
 
 go 1.25.5
 
