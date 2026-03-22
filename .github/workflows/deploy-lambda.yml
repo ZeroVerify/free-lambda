@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  AWS_REGIONS: "us-east-1,us-west-2"
+  AWS_REGIONS: "us-east-1"
 
 jobs:
   deploy:
