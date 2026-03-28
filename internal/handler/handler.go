@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	bitIndicesTable  = "bit_indices"
+	bitIndicesTable  = "zeroverify-bit-indices"
 	statusRevoked    = "REVOKED"
 	statusFree       = "FREE"
 	statusClaimed    = "CLAIMED"
