@@ -14,76 +14,97 @@ import (
 )
 
 const (
-	bitIndicesTable = "bit_indices"
-	statusRevoked   = "REVOKED"
-	statusFree      = "FREE"
-	statusClaimed   = "CLAIMED"
-	maxRetries      = 3
+	bitIndicesTable  = "bit_indices"
+	statusRevoked    = "REVOKED"
+	statusFree       = "FREE"
+	statusClaimed    = "CLAIMED"
+	maxRetries       = 3
+	metadataSentinel = "-1"
 )
 
 type dynamoDBClient interface {
 	UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 }
 
-var ddbClient dynamoDBClient
 
-func init() {
-	cfg, err := config.LoadDefaultConfig(context.Background())
-	if err != nil {
-		log.Fatalf("failed to load AWS config: %v", err)
-	}
-	ddbClient = dynamodb.NewFromConfig(cfg)
+type Handler struct {
+	ddb dynamoDBClient
 }
 
-func Handle(ctx context.Context, event events.DynamoDBEvent) error {
+func New() (*Handler, error) {
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+	return &Handler{ddb: dynamodb.NewFromConfig(cfg)}, nil
+}
+
+func (h *Handler) Handle(ctx context.Context, event events.DynamoDBEvent) error {
 	for _, record := range event.Records {
-		if err := processRecord(ctx, record); err != nil {
+		if err := h.processRecord(ctx, record); err != nil {
 			log.Printf("error processing record: %v", err)
 		}
 	}
 	return nil
 }
-// processRecord — move UserIdentity to record level
-func processRecord(ctx context.Context, record events.DynamoDBEventRecord) error {
+
+func (h *Handler) processRecord(ctx context.Context, record events.DynamoDBEventRecord) error {
 	switch {
 	case record.EventName == "MODIFY":
-		return handleRevocation(ctx, record)
+		oldStatus, hasOld := record.Change.OldImage["status"]
+		newStatus, hasNew := record.Change.NewImage["status"]
+		if !hasOld || !hasNew {
+			log.Printf("SKIP: MODIFY missing status in old/new image, eventID=%s", record.EventID)
+			return nil
+		}
+		if oldStatus.String() != statusClaimed || newStatus.String() != statusRevoked {
+			log.Printf("SKIP: MODIFY is not a CLAIMED->REVOKED transition, eventID=%s", record.EventID)
+			return nil
+		}
+		return h.handleRevocation(ctx, record)
 
 	case record.EventName == "REMOVE" &&
 		record.UserIdentity != nil &&
 		record.UserIdentity.PrincipalID == "dynamodb.amazonaws.com":
-		return handleTTLExpiry(ctx, record)
+		return h.handleTTLExpiry(ctx, record)
 
 	default:
 		return nil
 	}
 }
 
-
-func handleRevocation(ctx context.Context, record events.DynamoDBEventRecord) error {
-	index, ok := record.Change.NewImage["revocation_index"]
+func (h *Handler) handleRevocation(ctx context.Context, record events.DynamoDBEventRecord) error {
+	index, ok := record.Change.NewImage["bit_index"]
 	if !ok {
-		log.Printf("SKIP: MODIFY record missing revocation_index, eventID=%s", record.EventID)
+		log.Printf("SKIP: MODIFY record missing bit_index, eventID=%s", record.EventID)
+		return nil
+	}
+	if index.Number() == metadataSentinel {
+		log.Printf("SKIP: ignoring metadata sentinel row, eventID=%s", record.EventID)
 		return nil
 	}
 	current := statusClaimed
-	return updateBitWithBackoff(ctx, index.Number(), statusRevoked, &current)
+	return h.updateBitWithBackoff(ctx, index.Number(), statusRevoked, &current)
 }
 
-func handleTTLExpiry(ctx context.Context, record events.DynamoDBEventRecord) error {
-	index, ok := record.Change.OldImage["revocation_index"]
+func (h *Handler) handleTTLExpiry(ctx context.Context, record events.DynamoDBEventRecord) error {
+	index, ok := record.Change.OldImage["bit_index"]
 	if !ok {
-		log.Printf("SKIP: REMOVE record missing revocation_index, eventID=%s", record.EventID)
+		log.Printf("SKIP: REMOVE record missing bit_index, eventID=%s", record.EventID)
 		return nil
 	}
-	return updateBitWithBackoff(ctx, index.Number(), statusFree, nil)
+	if index.Number() == metadataSentinel {
+		log.Printf("SKIP: ignoring metadata sentinel row, eventID=%s", record.EventID)
+		return nil
+	}
+	return h.updateBitWithBackoff(ctx, index.Number(), statusFree, nil)
 }
 
-func updateBitWithBackoff(ctx context.Context, revocationIndex string, targetStatus string, requiredCurrentStatus *string) error {
+func (h *Handler) updateBitWithBackoff(ctx context.Context, bitIndex string, targetStatus string, requiredCurrentStatus *string) error {
 	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String(bitIndicesTable),
 		Key: map[string]types.AttributeValue{
-			"revocation_index": &types.AttributeValueMemberN{Value: revocationIndex},
+			"bit_index": &types.AttributeValueMemberN{Value: bitIndex},
 		},
 		UpdateExpression: aws.String("SET #s = :target"),
 		ExpressionAttributeNames: map[string]string{
@@ -108,7 +129,7 @@ func updateBitWithBackoff(ctx context.Context, revocationIndex string, targetSta
 			time.Sleep(backoff)
 		}
 
-		_, err := ddbClient.UpdateItem(ctx, input)
+		_, err := h.ddb.UpdateItem(ctx, input)
 		if err == nil {
 			return nil
 		}
@@ -119,11 +140,11 @@ func updateBitWithBackoff(ctx context.Context, revocationIndex string, targetSta
 			continue
 		}
 
-		log.Printf("SKIP: non-transient DynamoDB error for index=%s: %v", revocationIndex, err)
+		log.Printf("SKIP: non-transient DynamoDB error for bit_index=%s: %v", bitIndex, err)
 		return nil
 	}
 
-	return fmt.Errorf("exhausted retries for index=%s: %w", revocationIndex, lastErr)
+	return fmt.Errorf("exhausted retries for bit_index=%s: %w", bitIndex, lastErr)
 }
 
 func isTransient(err error) bool {
