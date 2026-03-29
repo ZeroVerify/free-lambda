@@ -18,6 +18,7 @@ const (
 	statusRevoked    = "REVOKED"
 	statusFree       = "FREE"
 	statusClaimed    = "CLAIMED"
+	statusActive     = "ACTIVE"
 	maxRetries       = 3
 	metadataSentinel = "-1"
 )
@@ -25,7 +26,6 @@ const (
 type dynamoDBClient interface {
 	UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 }
-
 
 type Handler struct {
 	ddb dynamoDBClient
@@ -57,7 +57,7 @@ func (h *Handler) processRecord(ctx context.Context, record events.DynamoDBEvent
 			log.Printf("SKIP: MODIFY missing status in old/new image, eventID=%s", record.EventID)
 			return nil
 		}
-		if oldStatus.String() != statusClaimed || newStatus.String() != statusRevoked {
+		if oldStatus.String() != statusActive || newStatus.String() != statusRevoked {
 			log.Printf("SKIP: MODIFY is not a CLAIMED->REVOKED transition, eventID=%s", record.EventID)
 			return nil
 		}
