@@ -74,9 +74,9 @@ func (h *Handler) processRecord(ctx context.Context, record events.DynamoDBEvent
 }
 
 func (h *Handler) handleRevocation(ctx context.Context, record events.DynamoDBEventRecord) error {
-	index, ok := record.Change.NewImage["bit_index"]
+	index, ok := record.Change.NewImage["revocation_index"]
 	if !ok {
-		log.Printf("SKIP: MODIFY record missing bit_index, eventID=%s", record.EventID)
+		log.Printf("SKIP: MODIFY record missing revocation_index, eventID=%s", record.EventID)
 		return nil
 	}
 	if index.Number() == metadataSentinel {
@@ -88,9 +88,9 @@ func (h *Handler) handleRevocation(ctx context.Context, record events.DynamoDBEv
 }
 
 func (h *Handler) handleTTLExpiry(ctx context.Context, record events.DynamoDBEventRecord) error {
-	index, ok := record.Change.OldImage["bit_index"]
+	index, ok := record.Change.OldImage["revocation_index"]
 	if !ok {
-		log.Printf("SKIP: REMOVE record missing bit_index, eventID=%s", record.EventID)
+		log.Printf("SKIP: REMOVE record missing revocation_index, eventID=%s", record.EventID)
 		return nil
 	}
 	if index.Number() == metadataSentinel {
